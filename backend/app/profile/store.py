@@ -87,13 +87,9 @@ def mark_generation_status(profile_id: str, status: str) -> None:
 def set_selected(profile_id: str, idx: int) -> None:
     """Mark one of the generated backgrounds as the active selection."""
     meta = get_profile(profile_id)
-    count = meta.get("generated_count", 0)
-    # Reject non-positive indices always; reject out-of-upper-bound only once
-    # at least one background has been saved (allows tentative write before
-    # generation completes, which the crash-safety test exercises).
-    if idx < 1 or (count > 0 and idx > count):
+    if idx < 1 or idx > meta.get("generated_count", 0):
         raise ValueError(
-            f"idx {idx} out of range; profile has {count} backgrounds"
+            f"idx {idx} out of range; profile has {meta.get('generated_count', 0)} backgrounds"
         )
     meta["selected_idx"] = idx
     _atomic_write_json(_meta_path(profile_id), meta)

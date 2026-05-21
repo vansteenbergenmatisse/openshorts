@@ -66,6 +66,7 @@ def test_get_profile_missing_raises(tmp_profile_root):
 
 def test_atomic_write_no_partial_meta_on_crash(tmp_profile_root, monkeypatch):
     pid = profile_store.create_profile(selfie_bytes=b"\x89PNG\r\n\x1a\n")
+    profile_store.save_generated(pid, idx=1, png_bytes=b"x")
     meta_path = tmp_profile_root / pid / "meta.json"
     original = meta_path.read_text()
 
