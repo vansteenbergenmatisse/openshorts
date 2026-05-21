@@ -6,10 +6,8 @@ A thin, dependency-free wrapper around fal.ai's queue API
 depend on the ``fal-client`` SDK — httpx is already a project dep, and
 the surface we need is small enough to own.
 
-The legacy SaaSShorts pipeline has its own private equivalents at
-``app.saas.pipeline._fal_run`` / ``._fal_upload_file``; they will be
-DRY'd onto this module in a separate refactor (cross-product change kept
-out of the AI Restyle PR scope).
+Used by AI Restyle (``app.ml.video_restyle``) and SaaSShorts
+(``app.saas.pipeline``).
 """
 from __future__ import annotations
 

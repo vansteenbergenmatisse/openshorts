@@ -15,16 +15,16 @@ Pipeline:
 import os
 import re
 import json
-import time
 import subprocess
 import httpx
 from urllib.parse import urljoin
 from typing import Optional, List, Dict, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from app.integrations.fal import submit_and_poll, upload_file
+
 
 ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1"
-FAL_QUEUE_BASE = "https://queue.fal.run"
 
 # Default ElevenLabs voices (name → voice_id)
 DEFAULT_VOICES = {
@@ -550,125 +550,6 @@ RULES:
 # Phase 2: Asset Generation
 # ═══════════════════════════════════════════════════════════════════════
 
-def _fal_run(model_id: str, input_data: dict, fal_key: str, timeout: int = 600) -> dict:
-    """
-    Submit a job to fal.ai queue, poll for completion, return result.
-    Uses the URLs returned by the submit response (as per fal.ai docs).
-    """
-    headers = {
-        "Authorization": f"Key {fal_key}",
-        "Content-Type": "application/json",
-    }
-
-    # ── Step 1: Submit to queue ──
-    submit_url = f"{FAL_QUEUE_BASE}/{model_id}"
-    print(f"[fal.ai] Submitting to {submit_url}...")
-
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.post(submit_url, headers=headers, json=input_data)
-
-    if resp.status_code >= 400:
-        print(f"[fal.ai] Submit error: {resp.text[:500]}")
-        raise Exception(f"fal.ai error ({resp.status_code}): {resp.text[:300]}")
-
-    try:
-        submit_data = resp.json()
-    except json.JSONDecodeError:
-        raise Exception(f"fal.ai invalid JSON: {resp.text[:300]}")
-
-    request_id = submit_data.get("request_id")
-    if not request_id:
-        # Synchronous result (no queue)
-        return submit_data
-
-    # Use the URLs from the submit response (guaranteed correct per docs)
-    status_url = submit_data.get("status_url", f"{FAL_QUEUE_BASE}/{model_id}/requests/{request_id}/status")
-    response_url = submit_data.get("response_url", f"{FAL_QUEUE_BASE}/{model_id}/requests/{request_id}")
-
-    print(f"[fal.ai] Queued: {request_id}")
-    print(f"[fal.ai] Status URL: {status_url}")
-
-    # ── Step 2: Poll for completion ──
-    poll_headers = {"Authorization": f"Key {fal_key}"}
-    start = time.time()
-
-    while time.time() - start < timeout:
-        elapsed = int(time.time() - start)
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                poll_resp = client.get(f"{status_url}?logs=1", headers=poll_headers)
-            status_data = poll_resp.json()
-        except Exception as e:
-            print(f"[fal.ai] Poll error (retrying): {e}")
-            time.sleep(5)
-            continue
-
-        status = status_data.get("status", "UNKNOWN")
-
-        if status == "COMPLETED":
-            print(f"[fal.ai] ✅ Completed in {elapsed}s! Fetching result...")
-            with httpx.Client(timeout=120.0) as client:
-                result_resp = client.get(response_url, headers=poll_headers)
-                return result_resp.json()
-
-        elif status in ("FAILED", "CANCELLED"):
-            error = status_data.get("error", "unknown error")
-            raise Exception(f"fal.ai job {status}: {error}")
-
-        # Log progress
-        queue_pos = status_data.get("queue_position", "")
-        pos_info = f" (pos: {queue_pos})" if queue_pos != "" else ""
-        print(f"[fal.ai] {model_id}: {status}{pos_info} ({elapsed}s)")
-        time.sleep(5)
-
-    raise Exception(f"fal.ai job timed out after {timeout}s for {model_id}")
-
-
-def _fal_upload_file(file_path: str, fal_key: str) -> str:
-    """Upload a local file to fal.ai CDN storage and return public URL."""
-    headers = {"Authorization": f"Key {fal_key}"}
-
-    filename = os.path.basename(file_path)
-    ext = os.path.splitext(filename)[1].lower()
-    content_types = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
-        ".mp4": "video/mp4",
-        ".webp": "image/webp",
-    }
-    content_type = content_types.get(ext, "application/octet-stream")
-
-    # Initiate upload
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(
-            "https://rest.alpha.fal.ai/storage/upload/initiate",
-            headers={**headers, "Content-Type": "application/json"},
-            json={"file_name": filename, "content_type": content_type},
-        )
-        resp.raise_for_status()
-        upload_info = resp.json()
-
-    upload_url = upload_info["upload_url"]
-    file_url = upload_info["file_url"]
-
-    # Upload file content
-    with open(file_path, "rb") as f:
-        file_bytes = f.read()
-
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.put(
-            upload_url,
-            content=file_bytes,
-            headers={"Content-Type": content_type},
-        )
-        resp.raise_for_status()
-
-    print(f"[fal.ai] Uploaded {filename} → {file_url}")
-    return file_url
-
 
 def generate_actor_images(
     description: str, fal_key: str, output_dir: str, title_slug: str, num_options: int = 3,
@@ -698,7 +579,7 @@ def generate_actor_images(
     paths = []
     # Flux 2 Pro — #1 for photorealistic faces
     def _gen_one(i):
-        result = _fal_run(
+        result = submit_and_poll(
             "fal-ai/flux-2-pro",
             {
                 "prompt": prompt,
@@ -831,10 +712,10 @@ def generate_talking_head(
     print(f"[SaaSShorts] 🗣️ Generating talking head (Kling Avatar v2)...")
 
     # Upload image and audio to fal.ai CDN
-    image_url = _fal_upload_file(image_path, fal_key)
-    audio_url = _fal_upload_file(audio_path, fal_key)
+    image_url = upload_file(image_path, fal_key)
+    audio_url = upload_file(audio_path, fal_key)
 
-    result = _fal_run(
+    result = submit_and_poll(
         "fal-ai/kling-video/ai-avatar/v2/standard",
         {
             "image_url": image_url,
@@ -880,11 +761,11 @@ def generate_talking_head_lowcost(
 
     if os.path.exists(hailuo_cache_path) and os.path.getsize(hailuo_cache_path) > 0:
         print(f"[SaaSShorts]   Hailuo clip cached, skipping generation.")
-        hailuo_video_url = _fal_upload_file(hailuo_cache_path, fal_key)
+        hailuo_video_url = upload_file(hailuo_cache_path, fal_key)
     else:
-        image_url = _fal_upload_file(image_path, fal_key)
+        image_url = upload_file(image_path, fal_key)
 
-        hailuo_result = _fal_run(
+        hailuo_result = submit_and_poll(
             "fal-ai/minimax/hailuo-2.3-fast/standard/image-to-video",
             {
                 "image_url": image_url,
@@ -917,10 +798,10 @@ def generate_talking_head_lowcost(
         print(f"[SaaSShorts]   Hailuo 2.3 Fast 6s clip ready (cached for retry).")
 
     # Step 2: Upload audio for lip-sync
-    audio_url = _fal_upload_file(audio_path, fal_key)
+    audio_url = upload_file(audio_path, fal_key)
 
     # Step 3: VEED Lipsync — high quality lip-sync with loop ($0.20 for 30s)
-    lipsync_result = _fal_run(
+    lipsync_result = submit_and_poll(
         "veed/lipsync",
         {
             "video_url": hailuo_video_url,
@@ -957,7 +838,7 @@ def generate_broll(
     img_path = output_path.replace(".mp4", "_img.png")
 
     # Step 1: Generate a high-quality still image with Flux 2 Pro
-    result = _fal_run(
+    result = submit_and_poll(
         "fal-ai/flux-2-pro",
         {
             "prompt": f"{prompt}. Cinematic, shallow depth of field, professional photography.",
