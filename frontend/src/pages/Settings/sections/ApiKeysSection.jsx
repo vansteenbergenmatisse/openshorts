@@ -110,8 +110,8 @@ export default function ApiKeysSection() {
         title="fal.ai"
         badge="Required for AI Restyle"
         badgeTone="amber"
-        info="Powers AI Restyle's video-to-video model (Wan 2.5 Turbo) AND the legacy SaaS UGC pipeline (Flux Pro + Kling for actor portraits and B-roll). Without this key, AI Restyle and SaaSShorts are disabled; Short-form / Long-form still work."
-        description="Sign up at fal.ai/dashboard/keys. Pay-as-you-go; budget roughly $1.50 per 30-second AI Restyle clip."
+        info="Powers AI Restyle's video matting (subject extraction and background replacement) AND the legacy SaaS UGC pipeline (Flux Pro + Kling for actor portraits and B-roll). Without this key, AI Restyle and SaaSShorts are disabled; Short-form / Long-form still work."
+        description="Sign up at fal.ai/dashboard/keys. Pay-as-you-go; budget roughly $0.50–1.00 per 30-second video matting job."
       >
         <input
           type="password"
