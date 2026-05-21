@@ -2927,7 +2927,7 @@
     },
     "/profiles/{profile_id}/{filename}": {
       "get": {
-        "description": "Static-serve selfie.png + bg-N.png with allowlist + path traversal guard.",
+        "description": "Static-serve selfie.png + bg-N.png with allowlist + path traversal guard.\n\nNo X-Gemini-Key required: the profile_id UUID (128-bit random) is the\ncapability. Consistent with GET /api/restyle/{job_id} (also unauthenticated;\njob_id is the credential).",
         "operationId": "serve_profile_file_profiles__profile_id___filename__get",
         "parameters": [
           {

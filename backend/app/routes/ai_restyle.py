@@ -11,11 +11,13 @@ module load time. The pipeline itself lives in ``app.restyle.pipeline``.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 
@@ -167,13 +169,36 @@ async def restyle_status(job_id: str):
 # Onboarding profile routes (Task 6)
 # ---------------------------------------------------------------------------
 
-import re
-from fastapi.responses import FileResponse
-
-
 MAX_SELFIE_BYTES = 10 * 1024 * 1024  # 10MB
 _BG_FILENAME_RE = re.compile(r"^(selfie|bg-[1-9][0-9]?)\.png$")
 _PROFILE_ID_RE = re.compile(r"^[0-9a-f-]{36}$")
+
+
+def _run_background_generation(profile_id: str, gemini_key: str) -> None:
+    """Shared background-task body for create_profile + regenerate routes.
+
+    Calls Gemini to generate 5 personalized backgrounds for the saved selfie,
+    persists each via the profile store, and updates generation_status. Any
+    exception flips status to "failed" and re-raises.
+    """
+    from app.profile import store as profile_store
+    from app.ml import profile_backgrounds
+    try:
+        profile_store.mark_generation_status(profile_id, "generating")
+        out_dir = os.path.join(profile_store.PROFILES_ROOT, profile_id)
+        paths = profile_backgrounds.generate_personalized_backgrounds(
+            api_key=gemini_key,
+            selfie_path=os.path.join(out_dir, "selfie.png"),
+            out_dir=out_dir,
+            count=5,
+        )
+        for i, path in enumerate(paths, start=1):
+            with open(path, "rb") as f:
+                profile_store.save_generated(profile_id, idx=i, png_bytes=f.read())
+        profile_store.mark_generation_status(profile_id, "ready")
+    except Exception:
+        profile_store.mark_generation_status(profile_id, "failed")
+        raise
 
 
 @router.post("/api/restyle/profile")
@@ -212,29 +237,7 @@ async def create_profile_route(
     from app.profile import store as profile_store
     profile_id = profile_store.create_profile(selfie_bytes=body)
 
-    def _run_generation():
-        # Import inside the function so the tests' monkeypatch of
-        # app.ml.profile_backgrounds.generate_personalized_backgrounds is honored
-        # by re-resolving the symbol on each background-task invocation.
-        from app.ml import profile_backgrounds
-        try:
-            profile_store.mark_generation_status(profile_id, "generating")
-            out_dir = os.path.join(profile_store.PROFILES_ROOT, profile_id)
-            paths = profile_backgrounds.generate_personalized_backgrounds(
-                api_key=gemini_key,
-                selfie_path=os.path.join(out_dir, "selfie.png"),
-                out_dir=out_dir,
-                count=5,
-            )
-            for i, path in enumerate(paths, start=1):
-                with open(path, "rb") as f:
-                    profile_store.save_generated(profile_id, idx=i, png_bytes=f.read())
-            profile_store.mark_generation_status(profile_id, "ready")
-        except Exception:
-            profile_store.mark_generation_status(profile_id, "failed")
-            raise
-
-    background_tasks.add_task(_run_generation)
+    background_tasks.add_task(_run_background_generation, profile_id, gemini_key)
     return {"profile_id": profile_id}
 
 
@@ -266,6 +269,9 @@ class SelectRequest(BaseModel):
 @router.post("/api/restyle/profile/{profile_id}/select")
 async def select_background_route(request: Request, profile_id: str, body: SelectRequest):
     """Mark one of the generated backgrounds as active. 400 if idx out of range."""
+    # X-Gemini-Key required for codebase-wide consistency with other mutating
+    # routes; the key itself is not validated downstream (this route only
+    # writes metadata, no LLM call). The profile_id UUID is the capability.
     gemini_key = request.headers.get("X-Gemini-Key")
     if not gemini_key:
         raise HTTPException(status_code=401, detail="X-Gemini-Key header required")
@@ -295,33 +301,18 @@ async def regenerate_route(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    folder = os.path.join(profile_store.PROFILES_ROOT, profile_id)
-
-    def _run_regeneration():
-        from app.ml import profile_backgrounds
-        try:
-            profile_store.mark_generation_status(profile_id, "generating")
-            paths = profile_backgrounds.generate_personalized_backgrounds(
-                api_key=gemini_key,
-                selfie_path=os.path.join(folder, "selfie.png"),
-                out_dir=folder,
-                count=5,
-            )
-            for i, path in enumerate(paths, start=1):
-                with open(path, "rb") as f:
-                    profile_store.save_generated(profile_id, idx=i, png_bytes=f.read())
-            profile_store.mark_generation_status(profile_id, "ready")
-        except Exception:
-            profile_store.mark_generation_status(profile_id, "failed")
-            raise
-
-    background_tasks.add_task(_run_regeneration)
+    background_tasks.add_task(_run_background_generation, profile_id, gemini_key)
     return {"ok": True, "profile_id": profile_id}
 
 
 @router.get("/profiles/{profile_id}/{filename}")
 async def serve_profile_file(profile_id: str, filename: str):
-    """Static-serve selfie.png + bg-N.png with allowlist + path traversal guard."""
+    """Static-serve selfie.png + bg-N.png with allowlist + path traversal guard.
+
+    No X-Gemini-Key required: the profile_id UUID (128-bit random) is the
+    capability. Consistent with GET /api/restyle/{job_id} (also unauthenticated;
+    job_id is the credential).
+    """
     if not _BG_FILENAME_RE.match(filename):
         raise HTTPException(status_code=404, detail="Not found")
     if not _PROFILE_ID_RE.match(profile_id):
