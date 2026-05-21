@@ -99,6 +99,11 @@ export default function Review({ wizard }) {
 
   return (
     <div className="h-full flex flex-col p-8">
+      {wizard.data.job?.result?.bg_verdict === 'noisy' && (
+        <div className="mb-3 rounded-md border border-yellow-500/30 bg-yellow-500/5 p-3 text-[12px] text-yellow-300">
+          ⚠️ Source background wasn't very clean — the matte may have edge artifacts. For best results, record against a solid color.
+        </div>
+      )}
       <div className="flex-1 flex flex-col items-center gap-4">
         <div className="flex items-center gap-2 text-[12px]">
           <button
