@@ -54,8 +54,8 @@ def test_set_selected_rejects_out_of_range(tmp_profile_root):
 
 def test_get_selected_background_bytes(tmp_profile_root):
     pid = profile_store.create_profile(selfie_bytes=b"\x89PNG\r\n\x1a\n")
-    profile_store.save_generated(pid, idx=3, png_bytes=b"\x89PNG\r\n\x1a\ntarget")
-    profile_store.set_selected(pid, idx=3)
+    profile_store.save_generated(pid, idx=1, png_bytes=b"\x89PNG\r\n\x1a\ntarget")
+    profile_store.set_selected(pid, idx=1)
     assert profile_store.get_selected_background_bytes(pid).endswith(b"target")
 
 

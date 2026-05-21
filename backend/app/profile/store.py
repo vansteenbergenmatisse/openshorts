@@ -6,7 +6,7 @@ import os
 import tempfile
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 # Override-able for tests via monkeypatch.
 PROFILES_ROOT = os.path.join(
@@ -68,12 +68,19 @@ def get_profile(profile_id: str) -> Dict[str, Any]:
 
 
 def save_generated(profile_id: str, idx: int, png_bytes: bytes) -> None:
-    """Persist a generated background image and bump generated_count."""
+    """Persist a generated background PNG.
+
+    Callers must deliver indices sequentially starting at 1; ``generated_count``
+    is set to the number of ``bg-N.png`` files actually on disk after the write.
+    """
     folder = _profile_dir(profile_id)
     with open(os.path.join(folder, f"bg-{idx}.png"), "wb") as f:
         f.write(png_bytes)
     meta = get_profile(profile_id)
-    meta["generated_count"] = max(meta.get("generated_count", 0), idx)
+    meta["generated_count"] = sum(
+        1 for name in os.listdir(folder)
+        if name.startswith("bg-") and name.endswith(".png")
+    )
     _atomic_write_json(_meta_path(profile_id), meta)
 
 
