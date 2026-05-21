@@ -59,8 +59,9 @@ export default function Upload({ wizard }) {
       <div className="max-w-2xl mx-auto">
         <h1 className="text-[24px] font-semibold mb-2">Upload a video</h1>
         <p className="text-[13px] text-zinc-400 mb-6">
-          MP4 or MOV, up to 30 seconds. We'll relight the lighting and replace
-          the background while keeping your motion and original audio.
+          MP4 or MOV, up to 30 seconds. We'll matte you out of the source
+          and drop you onto your selected background — your motion and
+          original audio stay intact.
         </p>
 
         {!data ? (

@@ -29,7 +29,9 @@ export default function BackgroundProfileSection() {
         const p = await fetchProfile(profileId);
         if (!alive) return;
         setProfile(p);
-        if (p.generation_status === 'generating') setTimeout(tick, 2000);
+        if (p.generation_status === 'pending' || p.generation_status === 'generating') {
+          setTimeout(tick, 2000);
+        }
       } catch {
         if (alive) setProfile(null);
       }
@@ -103,7 +105,7 @@ export default function BackgroundProfileSection() {
         </div>
       )}
 
-      {profileId && profile?.generation_status === 'generating' && (
+      {profileId && (profile?.generation_status === 'pending' || profile?.generation_status === 'generating') && (
         <div className="rounded-lg border border-border p-6 text-center">
           <div className="animate-pulse text-[13px] text-zinc-400">
             Generating 5 backgrounds… (~20-40s)
