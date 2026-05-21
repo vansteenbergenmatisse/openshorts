@@ -161,3 +161,161 @@ async def restyle_status(job_id: str):
         progress_pct=job.get("progress_pct", 0),
         result=job.get("result"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Onboarding profile routes (Task 6)
+# ---------------------------------------------------------------------------
+
+import re
+from fastapi.responses import FileResponse
+
+
+MAX_SELFIE_BYTES = 10 * 1024 * 1024  # 10MB
+_BG_FILENAME_RE = re.compile(r"^(selfie|bg-[1-9][0-9]?)\.png$")
+_PROFILE_ID_RE = re.compile(r"^[0-9a-f-]{36}$")
+
+
+@router.post("/api/restyle/profile")
+async def create_profile_route(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    selfie: UploadFile = File(...),
+):
+    """Create profile + kick off async 5-background generation. Returns {profile_id}."""
+    gemini_key = request.headers.get("X-Gemini-Key")
+    if not gemini_key:
+        raise HTTPException(status_code=401, detail="X-Gemini-Key header required")
+
+    body = await selfie.read()
+    if len(body) > MAX_SELFIE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Selfie exceeds {MAX_SELFIE_BYTES // 1024 // 1024}MB cap",
+        )
+    if not body.startswith(b"\x89PNG\r\n\x1a\n") and not body.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(status_code=400, detail="Selfie must be PNG or JPEG")
+
+    from app.profile import store as profile_store
+    profile_id = profile_store.create_profile(selfie_bytes=body)
+
+    def _run_generation():
+        # Import inside the function so the tests' monkeypatch of
+        # app.ml.profile_backgrounds.generate_personalized_backgrounds is honored
+        # by re-resolving the symbol on each background-task invocation.
+        from app.ml import profile_backgrounds
+        try:
+            profile_store.mark_generation_status(profile_id, "generating")
+            out_dir = os.path.join(profile_store.PROFILES_ROOT, profile_id)
+            paths = profile_backgrounds.generate_personalized_backgrounds(
+                api_key=gemini_key,
+                selfie_path=os.path.join(out_dir, "selfie.png"),
+                out_dir=out_dir,
+                count=5,
+            )
+            for i, path in enumerate(paths, start=1):
+                with open(path, "rb") as f:
+                    profile_store.save_generated(profile_id, idx=i, png_bytes=f.read())
+            profile_store.mark_generation_status(profile_id, "ready")
+        except Exception:
+            profile_store.mark_generation_status(profile_id, "failed")
+            raise
+
+    background_tasks.add_task(_run_generation)
+    return {"profile_id": profile_id}
+
+
+@router.get("/api/restyle/profile/{profile_id}")
+async def get_profile_route(profile_id: str):
+    """Return current profile state (status, generated count, selected idx, bg URLs)."""
+    from app.profile import store as profile_store
+    try:
+        meta = profile_store.get_profile(profile_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    backgrounds = [
+        {"idx": i, "url": f"/profiles/{profile_id}/bg-{i}.png"}
+        for i in range(1, meta.get("generated_count", 0) + 1)
+    ]
+    return {
+        "profile_id": profile_id,
+        "generation_status": meta.get("generation_status"),
+        "generated_count": meta.get("generated_count", 0),
+        "selected_idx": meta.get("selected_idx"),
+        "backgrounds": backgrounds,
+    }
+
+
+class SelectRequest(BaseModel):
+    idx: int = Field(..., ge=1, le=99)
+
+
+@router.post("/api/restyle/profile/{profile_id}/select")
+async def select_background_route(profile_id: str, body: SelectRequest):
+    """Mark one of the generated backgrounds as active. 400 if idx out of range."""
+    from app.profile import store as profile_store
+    try:
+        profile_store.set_selected(profile_id, idx=body.idx)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "selected_idx": body.idx}
+
+
+@router.post("/api/restyle/profile/{profile_id}/regenerate")
+async def regenerate_route(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    profile_id: str,
+):
+    """Re-run the 5-background generation against the saved selfie."""
+    gemini_key = request.headers.get("X-Gemini-Key")
+    if not gemini_key:
+        raise HTTPException(status_code=401, detail="X-Gemini-Key header required")
+    from app.profile import store as profile_store
+    try:
+        profile_store.get_profile(profile_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    folder = os.path.join(profile_store.PROFILES_ROOT, profile_id)
+
+    def _run_regeneration():
+        from app.ml import profile_backgrounds
+        try:
+            profile_store.mark_generation_status(profile_id, "generating")
+            paths = profile_backgrounds.generate_personalized_backgrounds(
+                api_key=gemini_key,
+                selfie_path=os.path.join(folder, "selfie.png"),
+                out_dir=folder,
+                count=5,
+            )
+            for i, path in enumerate(paths, start=1):
+                with open(path, "rb") as f:
+                    profile_store.save_generated(profile_id, idx=i, png_bytes=f.read())
+            profile_store.mark_generation_status(profile_id, "ready")
+        except Exception:
+            profile_store.mark_generation_status(profile_id, "failed")
+            raise
+
+    background_tasks.add_task(_run_regeneration)
+    return {"ok": True, "profile_id": profile_id}
+
+
+@router.get("/profiles/{profile_id}/{filename}")
+async def serve_profile_file(profile_id: str, filename: str):
+    """Static-serve selfie.png + bg-N.png with allowlist + path traversal guard."""
+    if not _BG_FILENAME_RE.match(filename):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not _PROFILE_ID_RE.match(profile_id):
+        raise HTTPException(status_code=400, detail="Bad profile_id")
+    from app.profile import store as profile_store
+    full_path = os.path.join(profile_store.PROFILES_ROOT, profile_id, filename)
+    real = os.path.realpath(full_path)
+    root_real = os.path.realpath(profile_store.PROFILES_ROOT)
+    if not real.startswith(root_real + os.sep):
+        raise HTTPException(status_code=400, detail="Bad path")
+    if not os.path.exists(real):
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(real, media_type="image/png")

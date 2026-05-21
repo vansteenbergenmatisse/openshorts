@@ -1,6 +1,20 @@
 {
   "components": {
     "schemas": {
+      "Body_create_profile_route_api_restyle_profile_post": {
+        "properties": {
+          "selfie": {
+            "contentMediaType": "application/octet-stream",
+            "title": "Selfie",
+            "type": "string"
+          }
+        },
+        "required": [
+          "selfie"
+        ],
+        "title": "Body_create_profile_route_api_restyle_profile_post",
+        "type": "object"
+      },
       "Body_process_endpoint_api_process_post": {
         "properties": {
           "acknowledged": {
@@ -790,6 +804,21 @@
           "platforms"
         ],
         "title": "SaaSPostRequest",
+        "type": "object"
+      },
+      "SelectRequest": {
+        "properties": {
+          "idx": {
+            "maximum": 99.0,
+            "minimum": 1.0,
+            "title": "Idx",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "idx"
+        ],
+        "title": "SelectRequest",
         "type": "object"
       },
       "SilenceCutRequest": {
@@ -1694,6 +1723,167 @@
           }
         },
         "summary": "Start Restyle"
+      }
+    },
+    "/api/restyle/profile": {
+      "post": {
+        "description": "Create profile + kick off async 5-background generation. Returns {profile_id}.",
+        "operationId": "create_profile_route_api_restyle_profile_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_profile_route_api_restyle_profile_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Profile Route"
+      }
+    },
+    "/api/restyle/profile/{profile_id}": {
+      "get": {
+        "description": "Return current profile state (status, generated count, selected idx, bg URLs).",
+        "operationId": "get_profile_route_api_restyle_profile__profile_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Profile Route"
+      }
+    },
+    "/api/restyle/profile/{profile_id}/regenerate": {
+      "post": {
+        "description": "Re-run the 5-background generation against the saved selfie.",
+        "operationId": "regenerate_route_api_restyle_profile__profile_id__regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Route"
+      }
+    },
+    "/api/restyle/profile/{profile_id}/select": {
+      "post": {
+        "description": "Mark one of the generated backgrounds as active. 400 if idx out of range.",
+        "operationId": "select_background_route_api_restyle_profile__profile_id__select_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Background Route"
       }
     },
     "/api/restyle/{job_id}": {
@@ -2733,6 +2923,53 @@
           }
         },
         "summary": "Gallery Html Page"
+      }
+    },
+    "/profiles/{profile_id}/{filename}": {
+      "get": {
+        "description": "Static-serve selfie.png + bg-N.png with allowlist + path traversal guard.",
+        "operationId": "serve_profile_file_profiles__profile_id___filename__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "profile_id",
+            "required": true,
+            "schema": {
+              "title": "Profile Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Serve Profile File"
       }
     },
     "/video/{video_id}": {
