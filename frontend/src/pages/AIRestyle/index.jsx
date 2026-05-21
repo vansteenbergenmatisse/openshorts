@@ -1,5 +1,6 @@
-// AI Restyle workflow: 3-step wizard (Upload -> Configure -> Review) for
-// relighting a short clip via Gemini Nano-Banana + fal.ai v2v. Mirrors
+// AI Restyle workflow: 3-step wizard (Upload -> Precheck -> Review) for
+// replacing the background of a short clip via fal.ai matting + composite
+// over the user's selected profile background. Mirrors
 // pages/ShortForm/index.jsx shape — Wizard + History sibling tabs, all
 // router-local under /ai-restyle/*.
 

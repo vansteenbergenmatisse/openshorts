@@ -5,23 +5,17 @@
 import { Check } from 'lucide-react';
 import { useWizard } from '../../hooks/useWizard.js';
 import Upload from './steps/Upload.jsx';
-import Configure from './steps/Configure.jsx';
+import Precheck from './steps/Precheck.jsx';
 import Review from './steps/Review.jsx';
 
 const STEPS = [
-  { id: 'upload',    label: 'Upload' },
-  { id: 'configure', label: 'Configure' },
-  { id: 'review',    label: 'Review' },
+  { id: 'upload',   label: 'Upload' },
+  { id: 'precheck', label: 'Precheck' },
+  { id: 'review',   label: 'Review' },
 ];
 
 const INITIAL = {
   file: null,
-  selection: {
-    backgroundPresetId: null,
-    lightingPresetId: null,
-    backgroundPromptOverride: null,
-    lightingPromptOverride: null,
-  },
   job: null,
 };
 
@@ -43,9 +37,9 @@ export default function Wizard() {
     <div className="h-full flex flex-col">
       <StepIndicator wizard={w} />
       <div className="flex-1 overflow-hidden">
-        {w.currentStep.id === 'upload'    && <Upload wizard={w} />}
-        {w.currentStep.id === 'configure' && <Configure wizard={w} />}
-        {w.currentStep.id === 'review'    && <Review wizard={w} />}
+        {w.currentStep.id === 'upload'   && <Upload wizard={w} />}
+        {w.currentStep.id === 'precheck' && <Precheck wizard={w} />}
+        {w.currentStep.id === 'review'   && <Review wizard={w} />}
       </div>
     </div>
   );

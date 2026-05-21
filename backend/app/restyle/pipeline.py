@@ -1,17 +1,12 @@
-"""AI Restyle pipeline orchestrator.
+"""AI Restyle v2 pipeline: background replacement.
 
-7-step async flow:
-  1. (Caller validates MIME + ftyp + size; we trust that.)
-  2. Probe duration; reject if > MAX_DURATION_SEC
-  3. Extract first frame to PNG
-  4. Nano Banana relight of that frame
-  5. fal.ai v2v with source video + relit frame as reference
-  6. Mux original audio back onto the restyled video
-  7. Persist result on the jobs dict; mark status='completed'
-
-Mutates ``jobs[job_id]`` in place so the route handler + frontend
-polling see live progress. Any unhandled exception flips status to
-'failed' and appends the exception message to logs.
+6-step async flow:
+  1. Probe duration; reject if > MAX_DURATION_SEC
+  2. Detect background cleanliness (warn-only, never blocks)
+  3. Matte subject via fal.ai
+  4. Composite over user's selected (blurred) background
+  5. Mux original audio back
+  6. Persist result + mark completed
 """
 from __future__ import annotations
 
@@ -20,9 +15,10 @@ import os
 from functools import partial
 from typing import Any, Dict, Optional
 
-from app.ml.frame_extract import extract_first_frame
-from app.ml.frame_relight import relight_frame
-from app.ml.video_restyle import restyle_video
+from app.ml.bg_detect import detect_clean_background
+from app.ml.video_matte import matte_video
+from app.profile import store as profile_store
+from app.video.composite import composite_subject_over_background
 from app.video.ffmpeg import mux_video_audio, probe_duration
 
 
@@ -31,7 +27,6 @@ MAX_DURATION_SEC = 30.0
 
 
 def _ensure_job(jobs: Dict[str, Any], job_id: str) -> Dict[str, Any]:
-    """Create a baseline entry if the caller forgot to seed one."""
     if job_id not in jobs:
         jobs[job_id] = {
             "status": "processing",
@@ -53,13 +48,11 @@ async def run_restyle_job(
     jobs: Dict[str, Any],
     job_id: str,
     input_path: str,
-    background_prompt: str,
-    lighting_prompt: str,
-    gemini_key: str,
+    profile_id: str,
     fal_key: str,
 ) -> None:
-    """Drive the full restyle pipeline for ``job_id``. Mutates
-    ``jobs[job_id]`` in place; never raises."""
+    """Drive the v2 background-replacement pipeline. Mutates jobs[job_id]
+    in place; never raises."""
     _ensure_job(jobs, job_id)
     output_dir = os.path.join(OUTPUT_DIR, job_id)
     os.makedirs(output_dir, exist_ok=True)
@@ -68,59 +61,59 @@ async def run_restyle_job(
     loop = asyncio.get_event_loop()
 
     try:
-        _log(jobs, job_id, "🔎 Probing video duration…", pct=5)
+        _log(jobs, job_id, "🔎 Probing duration…", pct=5)
         duration = await loop.run_in_executor(None, partial(probe_duration, input_path))
         if duration > MAX_DURATION_SEC:
             raise ValueError(
-                f"Video duration {duration:.1f}s exceeds the {MAX_DURATION_SEC:.0f}s "
-                f"cap for AI Restyle v1"
+                f"Video duration {duration:.1f}s exceeds the {MAX_DURATION_SEC:.0f}s cap"
             )
 
-        _log(jobs, job_id, "🎞️ Extracting first frame…", pct=10)
-        frame_path = os.path.join(output_dir, f"{base}_frame.png")
+        _log(jobs, job_id, "🪟 Checking background cleanliness…", pct=15)
+        verdict, score, hex_color = await loop.run_in_executor(
+            None, partial(detect_clean_background, input_path)
+        )
+        if verdict == "clean":
+            _log(jobs, job_id, f"✅ Clean source background ({hex_color}, score {score:.1f})")
+        else:
+            _log(jobs, job_id, f"⚠️ Background may not be clean (score {score:.1f}); results may vary")
+
+        _log(jobs, job_id, "✂️ Matting subject (fal.ai)…", pct=30)
+        matted = os.path.join(output_dir, f"{base}_matted.mov")
         await loop.run_in_executor(
-            None, partial(extract_first_frame, input_path, frame_path),
+            None,
+            partial(matte_video, api_key=fal_key, video_path=input_path, out_path=matted),
         )
 
-        _log(jobs, job_id, "🪄 Relighting frame with Nano Banana…", pct=20)
-        relit_path = os.path.join(output_dir, f"{base}_relit.png")
+        _log(jobs, job_id, "🎨 Compositing over your selected background…", pct=70)
+        selected_bg = os.path.join(output_dir, "selected_bg.png")
+        with open(selected_bg, "wb") as f:
+            f.write(profile_store.get_selected_background_bytes(profile_id))
+        composited = os.path.join(output_dir, f"{base}_composited.mp4")
         await loop.run_in_executor(
             None,
             partial(
-                relight_frame,
-                api_key=gemini_key,
-                frame_path=frame_path,
-                background_prompt=background_prompt,
-                lighting_prompt=lighting_prompt,
-                out_path=relit_path,
+                composite_subject_over_background,
+                matte_video=matted,
+                background_png=selected_bg,
+                out_path=composited,
             ),
         )
 
-        _log(jobs, job_id, "🎬 Restyling video via fal.ai (~30-90s)…", pct=40)
-        restyled_noaudio = os.path.join(output_dir, f"{base}_restyled_noaudio.mp4")
-        await loop.run_in_executor(
-            None,
-            partial(
-                restyle_video,
-                api_key=fal_key,
-                video_path=input_path,
-                reference_frame_path=relit_path,
-                out_path=restyled_noaudio,
-            ),
-        )
-
-        _log(jobs, job_id, "🔊 Muxing original audio back…", pct=90)
+        _log(jobs, job_id, "🔊 Muxing original audio…", pct=90)
         final_out = os.path.join(output_dir, f"restyled_{os.path.basename(input_path)}")
         await loop.run_in_executor(
-            None,
-            partial(mux_video_audio, restyled_noaudio, input_path, final_out),
+            None, partial(mux_video_audio, composited, input_path, final_out)
         )
 
         job = jobs[job_id]
         job["result"] = {
             "video_url": f"/videos/{job_id}/{os.path.basename(final_out)}",
-            "original_url": f"/videos/{job_id}/{os.path.basename(input_path)}",
+            # original_url intentionally omitted: the source file lives in UPLOAD_DIR
+            # (not OUTPUT_DIR), so the /videos static mount cannot serve it. The
+            # frontend uses its own blob URL from the file picker instead.
+            "profile_id": profile_id,
             "duration_sec": duration,
+            "bg_verdict": verdict,
         }
         job["status"] = "completed"
         job["progress_pct"] = 100

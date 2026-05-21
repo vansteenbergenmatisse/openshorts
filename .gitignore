@@ -23,6 +23,7 @@ uploads/
 downloads/
 videos/
 output/
+profiles/
 
 # OS / IDE
 .DS_Store
@@ -53,4 +54,5 @@ skills-lock.json
 # Session-local artifacts (handovers, test screenshots) — not for git
 .session/
 .compact-ultra
+.tmp-screenshots/
 
