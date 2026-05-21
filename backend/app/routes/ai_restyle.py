@@ -24,7 +24,6 @@ from pydantic import BaseModel, Field
 router = APIRouter()
 
 
-MAX_PROMPT_LEN = 500
 # AI Restyle caps at 30s of video; 250MB is generous (8.3MB/s for 30s,
 # ~67 Mbps which is well above streaming-quality bitrates). Tighter than
 # main.py's 2GB cap on /api/process because a 30s clip never approaches
@@ -47,16 +46,17 @@ async def start_restyle(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    background_prompt: str = Form(...),
-    lighting_prompt: str = Form(...),
+    profile_id: str = Form(...),
 ):
-    """Start a restyle job. Returns ``{job_id}`` immediately; poll
-    ``GET /api/restyle/{job_id}`` for status."""
-    # Deferred imports — main.py imports the router, so a top-level
-    # import would cycle.
+    """Start a background-replacement restyle job. Requires a profile with
+    a selected background. Returns {job_id} immediately; poll
+    GET /api/restyle/{job_id} for status."""
     from app.main import jobs, _ensure_video_upload, OUTPUT_DIR, UPLOAD_DIR
+    from app.profile import store as profile_store
 
-    # C1 auth (matches /api/process: auth check before any other work)
+    # C1 auth — kept for codebase-wide consistency; fal_key is the only one
+    # the v2 pipeline actually uses, but gemini_key is the standard auth gate
+    # across all mutating routes.
     gemini_key = request.headers.get("X-Gemini-Key")
     fal_key = request.headers.get("X-Fal-Key")
     if not gemini_key:
@@ -64,16 +64,15 @@ async def start_restyle(
     if not fal_key:
         raise HTTPException(status_code=401, detail="X-Fal-Key header required")
 
-    # C3 input validation: prompt-length cap
-    if len(background_prompt) > MAX_PROMPT_LEN:
+    # Profile validation up-front (after auth, before any disk I/O).
+    try:
+        meta = profile_store.get_profile(profile_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    if meta.get("selected_idx") is None:
         raise HTTPException(
-            status_code=413,
-            detail=f"background_prompt exceeds {MAX_PROMPT_LEN} chars",
-        )
-    if len(lighting_prompt) > MAX_PROMPT_LEN:
-        raise HTTPException(
-            status_code=413,
-            detail=f"lighting_prompt exceeds {MAX_PROMPT_LEN} chars",
+            status_code=400,
+            detail="Profile has no selected background; pick one in Settings",
         )
 
     limit_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -130,7 +129,7 @@ async def start_restyle(
         "logs": [f"📥 Received {safe_name} ({size / 1024 / 1024:.1f} MB)"],
         "progress_pct": 0,
         "result": None,
-        "product": "ai-restyle",
+        "product": "ai-restyle-v2",
     }
 
     # Schedule the async pipeline. FastAPI BackgroundTasks awaits async
@@ -141,9 +140,7 @@ async def start_restyle(
         jobs=jobs,
         job_id=job_id,
         input_path=input_path,
-        background_prompt=background_prompt,
-        lighting_prompt=lighting_prompt,
-        gemini_key=gemini_key,
+        profile_id=profile_id,
         fal_key=fal_key,
     )
 

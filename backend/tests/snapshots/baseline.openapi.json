@@ -148,24 +148,19 @@
       },
       "Body_start_restyle_api_restyle_post": {
         "properties": {
-          "background_prompt": {
-            "title": "Background Prompt",
-            "type": "string"
-          },
           "file": {
             "contentMediaType": "application/octet-stream",
             "title": "File",
             "type": "string"
           },
-          "lighting_prompt": {
-            "title": "Lighting Prompt",
+          "profile_id": {
+            "title": "Profile Id",
             "type": "string"
           }
         },
         "required": [
           "file",
-          "background_prompt",
-          "lighting_prompt"
+          "profile_id"
         ],
         "title": "Body_start_restyle_api_restyle_post",
         "type": "object"
@@ -1690,7 +1685,7 @@
     },
     "/api/restyle": {
       "post": {
-        "description": "Start a restyle job. Returns ``{job_id}`` immediately; poll\n``GET /api/restyle/{job_id}`` for status.",
+        "description": "Start a background-replacement restyle job. Requires a profile with\na selected background. Returns {job_id} immediately; poll\nGET /api/restyle/{job_id} for status.",
         "operationId": "start_restyle_api_restyle_post",
         "requestBody": {
           "content": {
