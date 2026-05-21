@@ -153,3 +153,18 @@ def test_post_regenerate_requires_gemini_key(client):
     pid = profile_store.create_profile(selfie_bytes=_png_bytes())
     r = client.post(f"/api/restyle/profile/{pid}/regenerate")
     assert r.status_code == 401
+
+
+def test_videos_static_mount_does_not_leak_profile_data(client, tmp_path):
+    """Ensure profile data is NOT under OUTPUT_DIR so the /videos mount can't reach it."""
+    from app.profile import store as profile_store
+    pid = profile_store.create_profile(selfie_bytes=_png_bytes())
+    # The /videos mount is rooted at OUTPUT_DIR; profile data must live elsewhere.
+    output_dir = os.environ.get("OUTPUT_DIR", "output")
+    assert not profile_store.PROFILES_ROOT.startswith(output_dir), (
+        f"PROFILES_ROOT ({profile_store.PROFILES_ROOT!r}) must not be under "
+        f"OUTPUT_DIR ({output_dir!r}) — the /videos static mount would expose it."
+    )
+    # The leak path must 404 (no such file under /videos).
+    r = client.get(f"/videos/.profiles/{pid}/selfie.png")
+    assert r.status_code in (403, 404)

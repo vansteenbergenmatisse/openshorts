@@ -108,7 +108,9 @@ async def run_restyle_job(
         job = jobs[job_id]
         job["result"] = {
             "video_url": f"/videos/{job_id}/{os.path.basename(final_out)}",
-            "original_url": f"/videos/{job_id}/{os.path.basename(input_path)}",
+            # original_url intentionally omitted: the source file lives in UPLOAD_DIR
+            # (not OUTPUT_DIR), so the /videos static mount cannot serve it. The
+            # frontend uses its own blob URL from the file picker instead.
             "profile_id": profile_id,
             "duration_sec": duration,
             "bg_verdict": verdict,

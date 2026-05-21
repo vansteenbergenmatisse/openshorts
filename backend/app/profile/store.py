@@ -9,9 +9,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 
 # Override-able for tests via monkeypatch.
-PROFILES_ROOT = os.path.join(
-    os.environ.get("OUTPUT_DIR", "output"), ".profiles"
-)
+# Lives OUTSIDE OUTPUT_DIR so the /videos static mount cannot serve selfies
+# or generated backgrounds. Controlled via PROFILES_DIR env var.
+PROFILES_ROOT = os.environ.get("PROFILES_DIR", "profiles")
 
 
 def _profile_dir(profile_id: str) -> str:

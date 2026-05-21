@@ -22,8 +22,8 @@ from app.integrations.s3 import upload_job_artifacts, list_all_clips, upload_act
 load_dotenv()
 
 # Constants
-UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "output"
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "output")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 

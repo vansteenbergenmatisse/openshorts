@@ -23,6 +23,7 @@ uploads/
 downloads/
 videos/
 output/
+profiles/
 
 # OS / IDE
 .DS_Store

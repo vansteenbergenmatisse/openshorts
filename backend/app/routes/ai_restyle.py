@@ -176,13 +176,24 @@ def _run_background_generation(profile_id: str, gemini_key: str) -> None:
 
     Calls Gemini to generate 5 personalized backgrounds for the saved selfie,
     persists each via the profile store, and updates generation_status. Any
-    exception flips status to "failed" and re-raises.
+    exception flips status to "failed" and re-raises. Clears prior bg-*.png
+    files before regenerating so a fresh generation never inherits stale state.
     """
     from app.profile import store as profile_store
     from app.ml import profile_backgrounds
     try:
         profile_store.mark_generation_status(profile_id, "generating")
         out_dir = os.path.join(profile_store.PROFILES_ROOT, profile_id)
+        # Clear stale bg-*.png files (regenerate path) so generated_count
+        # and selected_idx don't end up referencing dead files.
+        for name in os.listdir(out_dir):
+            if name.startswith("bg-") and name.endswith(".png"):
+                os.remove(os.path.join(out_dir, name))
+        meta = profile_store.get_profile(profile_id)
+        meta["generated_count"] = 0
+        meta["selected_idx"] = None
+        profile_store._atomic_write_json(profile_store._meta_path(profile_id), meta)
+        # Now generate fresh batch
         paths = profile_backgrounds.generate_personalized_backgrounds(
             api_key=gemini_key,
             selfie_path=os.path.join(out_dir, "selfie.png"),
