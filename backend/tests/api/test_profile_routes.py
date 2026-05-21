@@ -97,7 +97,11 @@ def test_post_select_sets_selection(client):
         profile_store.save_generated(pid, idx=i, png_bytes=b"\x89PNG\r\n\x1a\nbg")
     profile_store.mark_generation_status(pid, "ready")
 
-    r = client.post(f"/api/restyle/profile/{pid}/select", json={"idx": 2})
+    r = client.post(
+        f"/api/restyle/profile/{pid}/select",
+        json={"idx": 2},
+        headers={"X-Gemini-Key": "test"},
+    )
     assert r.status_code == 200
     assert client.get(f"/api/restyle/profile/{pid}").json()["selected_idx"] == 2
 
@@ -106,8 +110,21 @@ def test_post_select_rejects_out_of_range(client):
     from app.profile import store as profile_store
     pid = profile_store.create_profile(selfie_bytes=_png_bytes())
     profile_store.save_generated(pid, idx=1, png_bytes=b"x")
-    r = client.post(f"/api/restyle/profile/{pid}/select", json={"idx": 99})
+    r = client.post(
+        f"/api/restyle/profile/{pid}/select",
+        json={"idx": 99},
+        headers={"X-Gemini-Key": "test"},
+    )
     assert r.status_code == 400
+
+
+def test_post_select_requires_gemini_key(client):
+    from app.profile import store as profile_store
+    pid = profile_store.create_profile(selfie_bytes=_png_bytes())
+    profile_store.save_generated(pid, idx=1, png_bytes=b"x")
+    r = client.post(f"/api/restyle/profile/{pid}/select", json={"idx": 1})
+    assert r.status_code == 401
+    assert "X-Gemini-Key" in r.json()["detail"]
 
 
 def test_get_profile_static_serve_blocks_traversal(client):

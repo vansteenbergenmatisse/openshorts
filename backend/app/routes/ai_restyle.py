@@ -187,14 +187,27 @@ async def create_profile_route(
     if not gemini_key:
         raise HTTPException(status_code=401, detail="X-Gemini-Key header required")
 
-    body = await selfie.read()
-    if len(body) > MAX_SELFIE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Selfie exceeds {MAX_SELFIE_BYTES // 1024 // 1024}MB cap",
-        )
-    if not body.startswith(b"\x89PNG\r\n\x1a\n") and not body.startswith(b"\xff\xd8\xff"):
+    # Streaming read with size cap: 413 as soon as the cap is exceeded;
+    # never buffer more than 10MB in memory.
+    chunks = []
+    total = 0
+    first_chunk = await selfie.read(_CHUNK)
+    if not first_chunk:
+        raise HTTPException(status_code=400, detail="Uploaded selfie is empty")
+    # MIME magic-byte sniff on the first chunk.
+    if not first_chunk.startswith(b"\x89PNG\r\n\x1a\n") and not first_chunk.startswith(b"\xff\xd8\xff"):
         raise HTTPException(status_code=400, detail="Selfie must be PNG or JPEG")
+    chunks.append(first_chunk)
+    total = len(first_chunk)
+    while chunk := await selfie.read(_CHUNK):
+        total += len(chunk)
+        if total > MAX_SELFIE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Selfie exceeds {MAX_SELFIE_BYTES // 1024 // 1024}MB cap",
+            )
+        chunks.append(chunk)
+    body = b"".join(chunks)
 
     from app.profile import store as profile_store
     profile_id = profile_store.create_profile(selfie_bytes=body)
@@ -251,8 +264,11 @@ class SelectRequest(BaseModel):
 
 
 @router.post("/api/restyle/profile/{profile_id}/select")
-async def select_background_route(profile_id: str, body: SelectRequest):
+async def select_background_route(request: Request, profile_id: str, body: SelectRequest):
     """Mark one of the generated backgrounds as active. 400 if idx out of range."""
+    gemini_key = request.headers.get("X-Gemini-Key")
+    if not gemini_key:
+        raise HTTPException(status_code=401, detail="X-Gemini-Key header required")
     from app.profile import store as profile_store
     try:
         profile_store.set_selected(profile_id, idx=body.idx)
